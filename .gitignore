@@ -1,0 +1,31 @@
+# Experiment results (do NOT push to GitHub)
+experiments/
+
+# Downloaded datasets
+data/
+
+# Model checkpoints
+*.pth
+*.pt
+*.onnx
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# Virtual environment / uv
+.venv/
+uv.lock
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+

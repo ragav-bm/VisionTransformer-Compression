@@ -4,7 +4,7 @@ from torch import nn
 from torchvision import datasets, transforms, models
 from torch.utils.data import DataLoader
 from torch import optim
-from my_models import ViT, CrossViT   
+from models import ViT, CrossViT
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Train a neural network to classify CIFAR10')
@@ -67,13 +67,13 @@ def run(args):
                                         transforms.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225))
                                         ])
     
-    dataset = datasets.CIFAR10('/home/cip/nf2024/ur03ocab/Desktop/AdvancedDeepLearning/cifar10/folder', download=True, train=True, transform=transform)
+    dataset = datasets.CIFAR10('./data', download=True, train=True, transform=transform)
     trainset, valset = torch.utils.data.random_split(dataset, [int(len(dataset)*0.9), len(dataset)-int(len(dataset)*0.9)])
     trainloader = DataLoader(trainset, batch_size=64, shuffle=True)
     valloader = DataLoader(valset, batch_size=64, shuffle=False)
     
     
-    testset = datasets.CIFAR10('/home/cip/nf2024/ur03ocab/Desktop/AdvancedDeepLearning/cifar10/folder/', download=True, train=False, transform=transform)
+    testset = datasets.CIFAR10('./data', download=True, train=False, transform=transform)
     testloader = DataLoader(testset, batch_size=64, shuffle=True)
     
     print(f"Using {args.model}")
@@ -105,13 +105,13 @@ def run(args):
         train(model, trainloader, optimizer, criterion, device, epoch)
         test(model, device, valloader, criterion, set="Validation")
     test(model, device, testloader, criterion)
-    print("THe model save :-")
+    print("Saving model:")
     if args.model == "r18":
-        torch.save(model, "r18_model_aug.pth")
+        torch.save(model, "experiments/r18_model_aug.pth")
     elif args.model == "vit":
-        torch.save(model, "vit_model_aug.pth")
+        torch.save(model, "experiments/vit_model_aug.pth")
     elif args.model == "cvit":
-        torch.save(model, "Cvit_model_aug.pth")
+        torch.save(model, "experiments/Cvit_model_aug.pth")
 
 if __name__ == '__main__':
     args = parse_args()
