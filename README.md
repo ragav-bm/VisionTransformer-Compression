@@ -2,6 +2,8 @@
 
 A PyTorch project exploring Vision Transformers (ViT) and Multi-Scale Cross-Attention Vision Transformers (CrossViT), progressing from baseline image classification to multi-label scene attribute perception and edge model compression.
 
+> **Note**: This repository is a follow-up project to [ragav-bm/VisionTransformer-and-Cross-ViT](https://github.com/ragav-bm/VisionTransformer-and-Cross-ViT), advancing from initial CIFAR-10 model exploration into multi-label scene understanding and edge compression pipelines.
+
 ---
 
 ## Overview
