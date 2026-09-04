@@ -27,22 +27,30 @@ Evaluated at full perception resolution ($224 \times 224$) on an NVIDIA RTX 5070
 
 ---
 
-## Phase 2: Knowledge Distillation Results
+## Phase 2: Knowledge Distillation & Structured Pruning Results
 
-Evaluated on **2,000 real validation images** from BDD100K across all 15 driving scene attributes:
+Evaluated on **2,000 real validation images** from BDD100K across all 15 driving scene attributes on an NVIDIA RTX 5070 Ti (Batch Size = 1, FP16):
 
-| Model Configuration | Training Strategy | Parameters | mAP (%) | Macro Recall (%) | $p50$ Latency (FP16) | Throughput (FPS) |
-|---|---|---|---|---|---|---|
-| **CrossViT Teacher** | Multi-Scale Baseline | 28.48M | 33.51% | 56.94% | 5.54 ms | 180.4 FPS |
-| **Standard ViT** | Scratch Baseline Student | 11.03M | 40.52% | 62.92% | **0.86 ms** | **1,157.2 FPS** |
-| **Standard ViT (Cold KD)** | Distilled from Scratch | 11.03M | 40.94% | **65.24%** | **0.86 ms** | **1,157.2 FPS** |
-| **Standard ViT (Warm KD)** | **Fine-Tuned with Teacher KD** | **11.03M** | **42.28%** 🚀 | 64.65% | **0.86 ms** | **1,157.2 FPS** |
+| Model Configuration | Strategy / Stage | Parameters | Zero-Shot mAP | Recovered mAP | Peak VRAM | $p50$ Latency | Throughput (FPS) |
+|---|---|---|---|---|---|---|---|
+| **CrossViT Teacher** | Baseline Teacher | 28.48M | — | 33.51% | 143.12 MB | 6.20 ms | 161.2 FPS |
+| **Standard ViT** | Scratch Baseline Student | 11.03M | — | 40.52% | 78.69 MB | 0.72 ms | 1,381.9 FPS |
+| **Standard ViT (Cold KD)** | Distilled from Scratch | 11.03M | — | 40.94% | 78.69 MB | 0.72 ms | 1,381.9 FPS |
+| **Standard ViT (Warm KD)** | **Distilled & Fine-Tuned** | **11.03M** | 42.28% | **42.28%** 🚀 | 78.69 MB | 0.72 ms | 1,381.9 FPS |
+| **Pruned ViT (20%)** | Zero-Shot Slicing (5H, 1229 MLP) | 9.02M (-18.2%) | 41.45% | — | 70.57 MB | 0.62 ms | 1,622.9 FPS |
+| **Pruned ViT (20%)** | **5-Epoch Recovery Fine-Tuned** | **9.02M** (-18.2%) | — | **43.07%** 🌟 | **70.57 MB** | **0.62 ms** | **1,622.9 FPS** |
+| **Pruned ViT (40%)** | Zero-Shot Slicing (4H, 922 MLP) | 7.01M (-36.4%) | 41.20% | — | 61.58 MB | 0.55 ms | 1,806.8 FPS |
+| **Pruned ViT (40%)** | **5-Epoch Recovery Fine-Tuned** | **7.01M** (-36.4%) | — | **42.28%** 🌟 | **61.58 MB** | **0.55 ms** | **1,806.8 FPS** |
+| **Pruned ViT (60%)** | Zero-Shot Slicing (2H, 614 MLP) | 4.41M (-60.0%) | 31.25% | — | 51.18 MB | 0.50 ms | 1,982.1 FPS |
+| **Pruned ViT (60%)** | **5-Epoch Recovery Fine-Tuned** | **4.41M** (-60.0%) | — | **40.09%** | **51.18 MB** | **0.50 ms** | **1,982.1 FPS** 🚀 |
 
 * **Cold vs. Warm Distillation in a single line**: Cold-start distillation trains an uninitialized student from scratch with teacher soft guidance (40.94% mAP), whereas Warm-start distillation fine-tunes an already-converged student to refine decision boundaries on tail attributes (42.28% mAP, +1.76% gain).
+* **Slicing vs. Recovery in a single line**: Physical dense slicing removes redundant heads and neurons causing a transient co-adaptation drop (Zero-Shot), which a brief 5-epoch fine-tuning pass completely recovers (up to 43.07% mAP) by allowing surviving parameters to absorb the lost capacity.
 
-> 💡 **Hardware Insights & Optimizations**: For details on FlashAttention-2 integration and why the single-stream ViT achieves 1,157 FPS while dual-stream CrossViT is CPU-dispatch bound at batch 1, see [**`PROJECT_PLAN.md` (Code Optimizations & Hardware Insights)**](PROJECT_PLAN.md#code-optimizations--hardware-insights).
+> 💡 **Pruning Theory & Hardware Insights**: For the complete mathematical formulations of $L_1$-norm head/channel importance scoring, FlashAttention kernel fusion, and co-adaptation recovery, see [**`PROJECT_PLAN.md` (Theory & Mechanics of Structured Pruning)**](PROJECT_PLAN.md#theory--mechanics-of-structured-pruning--recovery).
 >
 > 📊 **Detailed Per-Class Breakdown**: For the full 15-attribute per-class AP breakdown (e.g. `parking lot` +9.69%, `rainy` +4.96%, `residential` +3.07%), see [**`PROJECT_PLAN.md` (Per-Class AP Report)**](PROJECT_PLAN.md#phase-2-comprehensive-per-class-average-precision-ap--report).
+
 ---
 
 ## Roadmap & Compression Pipeline

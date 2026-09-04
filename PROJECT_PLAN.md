@@ -32,12 +32,18 @@ A research and engineering roadmap exploring Vision Transformers (ViT) and Multi
 
 Evaluated on **2,000 real validation images** from BDD100K on an NVIDIA RTX 5070 Ti (Batch Size = 1, FP16):
 
-| Model Configuration | Sparsity | Parameters | Zero-Shot mAP | Recovered mAP | Peak VRAM | $p50$ Latency | Throughput (FPS) |
-|---|---|---|---|---|---|---|---|
-| **Unpruned Warm ViT** | 0% | 11.03M | 54.96% | 54.96% | 78.69 MB | 0.72 ms | 1,381.9 FPS |
-| **Pruned ViT (20%)** | 20% | **9.02M** (-18.2%) | 53.90% | **60.16%** 🌟 | **70.57 MB** | **0.62 ms** | **1,622.9 FPS** |
-| **Pruned ViT (40%)** | 40% | **7.01M** (-36.4%) | 53.69% | **60.40%** 🌟 | **61.58 MB** | **0.55 ms** | **1,806.8 FPS** |
-| **Pruned ViT (60%)** | 60% | **4.41M** (-60.0%) | 40.70% | **54.74%** | **51.18 MB** | **0.50 ms** | **1,982.1 FPS** 🚀 |
+| Model Configuration | Compression Stage | Retained Architecture | Parameters | Zero-Shot mAP | Recovered mAP | Macro F1 | Peak VRAM | $p50$ Latency | Throughput (FPS) |
+|---|---|---|---|---|---|---|---|---|---|
+| **CrossViT Teacher** | Baseline Teacher | Dual-Branch ($192\text{D} + 384\text{D}$) | 28.48M | — | 33.51% | 34.86% | 143.12 MB | 6.20 ms | 161.2 FPS |
+| **Standard ViT** | Scratch Student Baseline | 6 Heads, 1536 MLP | 11.03M | — | 40.52% | 42.55% | 78.69 MB | 0.72 ms | 1,381.9 FPS |
+| **Standard ViT (Cold KD)** | Distilled from Scratch | 6 Heads, 1536 MLP | 11.03M | — | 40.94% | 40.55% | 78.69 MB | 0.72 ms | 1,381.9 FPS |
+| **Standard ViT (Warm KD)** | Distilled & Fine-Tuned | 6 Heads, 1536 MLP | 11.03M | 42.28% | 42.28% | 41.76% | 78.69 MB | 0.72 ms | 1,381.9 FPS |
+| **Pruned ViT (20%)** | Zero-Shot Slicing | 5 Heads, 1229 MLP | 9.02M (-18.2%) | 41.45% | — | — | 70.57 MB | 0.62 ms | 1,622.9 FPS |
+| **Pruned ViT (20%)** | **5-Epoch Recovery** | **5 Heads, 1229 MLP** | **9.02M** (-18.2%) | — | **43.07%** 🌟 | **43.72%** | **70.57 MB** | **0.62 ms** | **1,622.9 FPS** |
+| **Pruned ViT (40%)** | Zero-Shot Slicing | 4 Heads, 922 MLP | 7.01M (-36.4%) | 41.20% | — | — | 61.58 MB | 0.55 ms | 1,806.8 FPS |
+| **Pruned ViT (40%)** | **5-Epoch Recovery** | **4 Heads, 922 MLP** | **7.01M** (-36.4%) | — | **42.28%** 🌟 | **43.39%** | **61.58 MB** | **0.55 ms** | **1,806.8 FPS** |
+| **Pruned ViT (60%)** | Zero-Shot Slicing | 2 Heads, 614 MLP | 4.41M (-60.0%) | 31.25% | — | — | 51.18 MB | 0.50 ms | 1,982.1 FPS |
+| **Pruned ViT (60%)** | **5-Epoch Recovery** | **2 Heads, 614 MLP** | **4.41M** (-60.0%) | — | **40.09%** | **41.45%** | **51.18 MB** | **0.50 ms** | **1,982.1 FPS** 🚀 |
 
 ---
 
@@ -77,6 +83,46 @@ In [`models.py`](models.py), attention operations were upgraded from naive `torc
 * **Standard ViT**: Operates on a single contiguous token sequence $(1, 197, 384)$. Tensor Cores execute uninterrupted without host synchronization barriers, yielding a **$1.57\times$ FP16 acceleration (0.86 ms / 1,157 FPS)**.
 * **CrossViT Teacher**: Possesses asymmetric dual branches ($196 \text{ tokens} \neq 49 \text{ tokens}$, $192\text{D} \neq 384\text{D}$). Each attention layer requires token slicing (`[:, :1]`), dimension projection adapters (`ProjectInOut`), and host-triggered concatenations (`torch.cat`). At batch size 1, CPU kernel dispatch overhead exceeds raw GPU compute time, starving Tensor Cores and leading to $5.54\text{ ms}$ latency.
 * **Distillation Rationale**: Knowledge Distillation allows transferring the representational capability of the multi-scale teacher into the streamlined single-sequence ViT student, retaining high perception accuracy while executing at real-time edge speeds ($0.86\text{ ms}$).
+
+---
+
+## Theory & Mechanics of Structured Pruning & Recovery
+
+```
+  [Unpruned ViT (11.03M)]
+          │
+          ▼  1. Compute L1 Importance Score for every Head & Channel
+   [Rank & Identify Weakest Heads / Neurons]
+          │
+          ▼  2. Physical Matrix Slicing (Discard lowest 20%, 40%, 60%)
+  [New Smaller Dense ViT (9.02M / 7.01M / 4.41M)]
+          │
+          ▼  3. Zero-Shot Evaluation (Temporary co-adaptation drop)
+  [Recovery Fine-Tuning (5 Epochs with Cosine Annealing)]
+          │
+          ▼  4. Surviving neurons shift weights to absorb lost capacity
+  [Final Accurate & Accelerated Edge Model]
+```
+
+### 1. Structured Head Pruning Formulation
+In Multi-Head Attention, each head $h \in \{0, \dots, H-1\}$ maps inputs via query, key, value projection matrices $W_q^{(h)}, W_k^{(h)}, W_v^{(h)} \in \mathbb{R}^{d_h \times D}$ and output projection $W_o^{(h)} \in \mathbb{R}^{D \times d_h}$ (where $d_h = 64, D = 384$).
+The composite $L_1$-norm importance score for head $h$ is:
+
+$$I_{\text{head}}(h) = \|W_q^{(h)}\|_1 + \|W_k^{(h)}\|_1 + \|W_v^{(h)}\|_1 + \|W_o^{(h)}\|_1 = \sum_{i,j} |W_{q,ij}^{(h)}| + |W_{k,ij}^{(h)}| + |W_{v,ij}^{(h)}| + |W_{o,ij}^{(h)}|$$
+
+The top $k = \lfloor H \times (1 - s) \rfloor$ heads are retained, and the remaining slices are physically removed from the weight tensors.
+
+### 2. Structured MLP Channel Slicing Formulation
+For a feed-forward layer with intermediate dimension $d_{\text{mlp}} = 1536$, neuron $j \in \{0, \dots, d_{\text{mlp}}-1\}$ connects via incoming weights $W_{\text{in}}[j, :] \in \mathbb{R}^{D}$ and outgoing weights $W_{\text{out}}[:, j] \in \mathbb{R}^{D}$.
+Its importance score is:
+
+$$I_{\text{mlp}}(j) = \|W_{\text{in}}[j, :]\|_1 + \|W_{\text{out}}[:, j]\|_1 = \sum_{d=1}^D |W_{\text{in}, jd}| + \sum_{d=1}^D |W_{\text{out}, dj}|$$
+
+The top $M = \lfloor d_{\text{mlp}} \times (1 - s) \rfloor$ channels are retained, producing a new dense linear layer of shape $(M, D)$ and $(D, M)$.
+
+### 3. Why Zero-Shot Accuracy Drops & How Recovery Restores It
+* **Co-Adaptation Loss**: During initial training, neurons learn coupled representations. Cutting neurons abruptly severs these signal paths, causing a transient accuracy drop (e.g. 60% pruned drops to 31.25% mAP).
+* **Recovery Fine-Tuning Mechanism**: Applying a short 5-epoch fine-tuning pass with gentle learning rates ($10^{-4} \to 10^{-6}$ via Cosine Annealing) allows the surviving dense parameters to re-adjust and absorb the functional workload of the pruned components, restoring mAP back to **40.09%** at 60% sparsity and **43.07%** at 20% sparsity.
 
 ---
 
