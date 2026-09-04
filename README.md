@@ -27,29 +27,21 @@ Evaluated at full perception resolution ($224 \times 224$) on an NVIDIA RTX 5070
 
 ---
 
-## Phase 2: Knowledge Distillation & Structured Pruning Results
+## Phase 2: Knowledge Distillation & Structured Pruning Summary
 
 Evaluated on **2,000 real validation images** from BDD100K across all 15 driving scene attributes on an NVIDIA RTX 5070 Ti (Batch Size = 1, FP16):
 
-| Model Configuration | Strategy / Stage | Parameters | Zero-Shot mAP | Recovered mAP | Peak VRAM | $p50$ Latency | Throughput (FPS) |
-|---|---|---|---|---|---|---|---|
-| **CrossViT Teacher** | Baseline Teacher | 28.48M | — | 33.51% | 143.12 MB | 6.20 ms | 161.2 FPS |
-| **Standard ViT** | Scratch Baseline Student | 11.03M | — | 40.52% | 78.69 MB | 0.72 ms | 1,381.9 FPS |
-| **Standard ViT (Cold KD)** | Distilled from Scratch | 11.03M | — | 40.94% | 78.69 MB | 0.72 ms | 1,381.9 FPS |
-| **Standard ViT (Warm KD)** | **Distilled & Fine-Tuned** | **11.03M** | 42.28% | **42.28%** 🚀 | 78.69 MB | 0.72 ms | 1,381.9 FPS |
-| **Pruned ViT (20%)** | Zero-Shot Slicing (5H, 1229 MLP) | 9.02M (-18.2%) | 41.45% | — | 70.57 MB | 0.62 ms | 1,622.9 FPS |
-| **Pruned ViT (20%)** | **5-Epoch Recovery Fine-Tuned** | **9.02M** (-18.2%) | — | **43.07%** 🌟 | **70.57 MB** | **0.62 ms** | **1,622.9 FPS** |
-| **Pruned ViT (40%)** | Zero-Shot Slicing (4H, 922 MLP) | 7.01M (-36.4%) | 41.20% | — | 61.58 MB | 0.55 ms | 1,806.8 FPS |
-| **Pruned ViT (40%)** | **5-Epoch Recovery Fine-Tuned** | **7.01M** (-36.4%) | — | **42.28%** 🌟 | **61.58 MB** | **0.55 ms** | **1,806.8 FPS** |
-| **Pruned ViT (60%)** | Zero-Shot Slicing (2H, 614 MLP) | 4.41M (-60.0%) | 31.25% | — | 51.18 MB | 0.50 ms | 1,982.1 FPS |
-| **Pruned ViT (60%)** | **5-Epoch Recovery Fine-Tuned** | **4.41M** (-60.0%) | — | **40.09%** | **51.18 MB** | **0.50 ms** | **1,982.1 FPS** 🚀 |
+| Model Configuration | Parameters | mAP | Latency ($p50$) | Throughput | Peak VRAM | Key Highlight |
+|---|---|---|---|---|---|---|
+| **CrossViT Teacher** | 28.48M | 33.51% | 6.20 ms | 161.2 FPS | 143.12 MB | Multi-scale teacher baseline |
+| **Standard ViT** | 11.03M | 40.52% | 0.72 ms | 1,381.9 FPS | 78.69 MB | Student trained from scratch |
+| **ViT (Cold KD)** | 11.03M | 40.94% | 0.72 ms | 1,381.9 FPS | 78.69 MB | Distilled from scratch |
+| **ViT (Warm KD)** | 11.03M | **42.28%** | 0.72 ms | 1,381.9 FPS | 78.69 MB | Distilled & fine-tuned (+1.76%) |
+| **Pruned ViT (20%)** | 9.02M (-18%) | **43.07%** 🌟 | 0.62 ms | 1,622.9 FPS | 70.57 MB | Best perception accuracy |
+| **Pruned ViT (40%)** | 7.01M (-36%) | **42.28%** 🌟 | 0.55 ms | 1,806.8 FPS | 61.58 MB | Matches unpruned KD at 64% size |
+| **Pruned ViT (60%)** | **4.41M** (-60%) | **40.09%** | **0.50 ms** | **1,982.1 FPS** 🚀 | **51.18 MB** | **1.44x speedup**, 60% parameter drop |
 
-* **Cold vs. Warm Distillation in a single line**: Cold-start distillation trains an uninitialized student from scratch with teacher soft guidance (40.94% mAP), whereas Warm-start distillation fine-tunes an already-converged student to refine decision boundaries on tail attributes (42.28% mAP, +1.76% gain).
-* **Slicing vs. Recovery in a single line**: Physical dense slicing removes redundant heads and neurons causing a transient co-adaptation drop (Zero-Shot), which a brief 5-epoch fine-tuning pass completely recovers (up to 43.07% mAP) by allowing surviving parameters to absorb the lost capacity.
-
-> 💡 **Pruning Theory & Hardware Insights**: For the complete mathematical formulations of $L_1$-norm head/channel importance scoring, FlashAttention kernel fusion, and co-adaptation recovery, see [**`PROJECT_PLAN.md` (Theory & Mechanics of Structured Pruning)**](PROJECT_PLAN.md#theory--mechanics-of-structured-pruning--recovery).
->
-> 📊 **Detailed Per-Class Breakdown**: For the full 15-attribute per-class AP breakdown (e.g. `parking lot` +9.69%, `rainy` +4.96%, `residential` +3.07%), see [**`PROJECT_PLAN.md` (Per-Class AP Report)**](PROJECT_PLAN.md#phase-2-comprehensive-per-class-average-precision-ap--report).
+> 📊 **Full Ablation & Intermediate Slicing Results**: For the complete zero-shot vs. recovered breakdown, macro F1, and per-class AP reports, see [**`PROJECT_PLAN.md`**](PROJECT_PLAN.md#phase-2-structured-pruning-benchmark--accuracy-recovery).
 
 ---
 
@@ -57,8 +49,8 @@ Evaluated on **2,000 real validation images** from BDD100K across all 15 driving
 
 1. **Phase 1: Multi-Label Baseline** (Completed ✅): Dataset pipeline for 15 BDD100K scene attributes, CrossViT teacher baseline training pipeline, and edge profiling harness.
 2. **Phase 2: Knowledge Distillation & Structured Pruning** (Completed ✅): Multi-scale KD (+1.76% mAP) and structured head/channel pruning (20%, 40%, 60% sparsity) achieving up to **1,982 FPS** (0.50 ms) at **4.41M parameters**.
-3. **Phase 3: Quantization & Deployment** (Next 🎯): ONNX graph export, INT8 Post-Training Quantization (PTQ), and INT8 Quantization-Aware Training (QAT).
-4. **Phase 4: Benchmarking & Pareto Analysis**: Comprehensive evaluation sweep measuring mAP accuracy vs. batch-1 latency ($p50$) to identify optimal deployment candidates for edge devices.
+3. **Phase 3: Quantization & Deployment** (Completed ✅): ONNX graph export, calibration-based static INT8 Post-Training Quantization (PTQ) reaching **4.90 MB footprint** (7.5x compression) with **99.8% mAP retention**.
+4. **Phase 4: Benchmarking & Pareto Analysis** (In Progress 🎯): Pareto frontier analysis (mAP vs. latency vs. model footprint) identifying optimal deployment operating points.
 
 For detailed milestone breakdowns, see [**`PROJECT_PLAN.md`**](PROJECT_PLAN.md).
 
@@ -74,11 +66,14 @@ For detailed milestone breakdowns, see [**`PROJECT_PLAN.md`**](PROJECT_PLAN.md).
 ├── train_bdd.py        # Multi-label teacher & baseline student training pipeline
 ├── distill.py          # Knowledge distillation pipeline (supports cold and warm start)
 ├── prune.py            # Structured head and channel pruning with recovery fine-tuning
-├── benchmark_edge.py   # Edge latency, peak VRAM, and FPS benchmarking harness
+├── export_onnx.py      # PyTorch to ONNX graph export with validation
+├── quantize.py         # Static calibration-based INT8 Post-Training Quantization
+├── benchmark_edge.py   # Edge latency, peak VRAM, and FPS benchmarking harness (PyTorch)
+├── benchmark_onnx.py   # ONNX Runtime latency and throughput benchmarking harness
 ├── models.py           # Hardware-optimized ViT and CrossViT model implementations
 ├── main.py             # Legacy CIFAR-10 classification script
 ├── assets/             # Benchmark plots and visual assets
-└── experiments/        # Saved model weights and experiment checkpoints (gitignored)
+└── experiments/        # Saved model weights and ONNX artifacts (gitignored)
 ```
 
 ---
