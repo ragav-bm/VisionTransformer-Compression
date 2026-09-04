@@ -58,26 +58,40 @@ def benchmark_latency(
     model.eval()
     model.to(device)
 
-    if use_fp16 and device.type == "cuda":
-        model = model.half()
-        dummy_input = torch.randn(*input_shape, dtype=torch.float16, device=device)
-    else:
-        dummy_input = torch.randn(*input_shape, dtype=torch.float32, device=device)
-
     batch_size = input_shape[0]
     total_m, trainable_m = count_parameters(model)
 
-    # 1. Warmup Runs (stabilizes GPU power state, cuDNN heuristics, and caches)
-    with torch.no_grad():
-        for _ in range(num_warmup):
-            _ = model(dummy_input)
-        if device.type == "cuda":
+    if use_fp16 and device.type == "cuda":
+        dummy_input = torch.randn(*input_shape, dtype=torch.float32, device=device)
+        # 1. Warmup Runs (stabilizes GPU power state, cuDNN heuristics, and caches)
+        with torch.no_grad():
+            with torch.amp.autocast('cuda', dtype=torch.float16):
+                for _ in range(num_warmup):
+                    _ = model(dummy_input)
             torch.cuda.synchronize(device)
 
-    # 2. Timed Runs using CUDA Events (microsecond precision)
-    latencies = []
+        # 2. Timed Runs using CUDA Events (microsecond precision)
+        latencies = []
+        start_event = torch.cuda.Event(enable_timing=True)
+        end_event = torch.cuda.Event(enable_timing=True)
 
-    if device.type == "cuda":
+        with torch.no_grad():
+            with torch.amp.autocast('cuda', dtype=torch.float16):
+                for _ in range(num_runs):
+                    start_event.record()
+                    _ = model(dummy_input)
+                    end_event.record()
+                    torch.cuda.synchronize(device)
+                    elapsed_ms = start_event.elapsed_time(end_event)
+                    latencies.append(elapsed_ms)
+    elif device.type == "cuda":
+        dummy_input = torch.randn(*input_shape, dtype=torch.float32, device=device)
+        with torch.no_grad():
+            for _ in range(num_warmup):
+                _ = model(dummy_input)
+            torch.cuda.synchronize(device)
+
+        latencies = []
         start_event = torch.cuda.Event(enable_timing=True)
         end_event = torch.cuda.Event(enable_timing=True)
 
@@ -87,7 +101,6 @@ def benchmark_latency(
                 _ = model(dummy_input)
                 end_event.record()
                 torch.cuda.synchronize(device)
-
                 elapsed_ms = start_event.elapsed_time(end_event)
                 latencies.append(elapsed_ms)
     else:
@@ -128,7 +141,9 @@ def benchmark_latency(
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Edge Latency & Resource Profiling Harness")
-    parser.add_argument("--model", type=str, default="cvit", choices=["cvit", "vit", "all"], help="Model to profile")
+    parser.add_argument("--model", type=str, default="all",
+                        choices=["cvit", "vit", "pruned_20", "pruned_40", "pruned_60", "pruned", "all"],
+                        help="Model to profile")
     parser.add_argument("--batch-size", type=int, default=1, help="Batch size for latency measurement (1 for real-time edge)")
     parser.add_argument("--image-size", type=int, default=224, help="Input image dimension (e.g. 224)")
     parser.add_argument("--runs", type=int, default=200, help="Number of benchmark iterations")
@@ -174,6 +189,42 @@ def build_benchmark_model(model_type, image_size=224):
             dropout=0.0,
             emb_dropout=0.0
         )
+    elif model_type == "pruned_20":
+        return ViT(
+            image_size=image_size,
+            patch_size=16,
+            num_classes=NUM_ATTRIBUTES,
+            dim=384,
+            depth=6,
+            heads=5,
+            mlp_dim=1229,
+            dropout=0.0,
+            emb_dropout=0.0
+        )
+    elif model_type == "pruned_40":
+        return ViT(
+            image_size=image_size,
+            patch_size=16,
+            num_classes=NUM_ATTRIBUTES,
+            dim=384,
+            depth=6,
+            heads=4,
+            mlp_dim=922,
+            dropout=0.0,
+            emb_dropout=0.0
+        )
+    elif model_type == "pruned_60":
+        return ViT(
+            image_size=image_size,
+            patch_size=16,
+            num_classes=NUM_ATTRIBUTES,
+            dim=384,
+            depth=6,
+            heads=3,
+            mlp_dim=614,
+            dropout=0.0,
+            emb_dropout=0.0
+        )
 
 
 if __name__ == "__main__":
@@ -183,12 +234,25 @@ if __name__ == "__main__":
     print(f"=== Edge Profiling Harness (Device: {device.type.upper()}) ===")
     print(f"Config: Batch Size={args.batch_size} | Resolution={args.image_size}x{args.image_size} | Warmup={args.warmup} | Runs={args.runs}\n")
 
-    models_to_test = ["cvit", "vit"] if args.model == "all" else [args.model]
+    if args.model == "all":
+        models_to_test = ["cvit", "vit", "pruned_20", "pruned_40", "pruned_60"]
+    elif args.model == "pruned":
+        models_to_test = ["pruned_20", "pruned_40", "pruned_60"]
+    else:
+        models_to_test = [args.model]
 
-    header = f"| {'Model':<12} | {'Precision':<9} | {'Params (M)':<10} | {'Peak RAM (MB)':<13} | {'p50 (ms)':<8} | {'p95 (ms)':<8} | {'p99 (ms)':<8} | {'FPS':<7} |"
-    divider = f"|{'-'*14}|{'-'*11}|{'-'*12}|{'-'*15}|{'-'*10}|{'-'*10}|{'-'*10}|{'-'*9}|"
+    header = f"| {'Model':<16} | {'Precision':<9} | {'Params (M)':<10} | {'Peak RAM (MB)':<13} | {'p50 (ms)':<8} | {'p95 (ms)':<8} | {'p99 (ms)':<8} | {'FPS':<7} |"
+    divider = f"|{'-'*18}|{'-'*11}|{'-'*12}|{'-'*15}|{'-'*10}|{'-'*10}|{'-'*10}|{'-'*9}|"
     print(header)
     print(divider)
+
+    name_map = {
+        "cvit": "CrossViT Teacher",
+        "vit": "Standard ViT",
+        "pruned_20": "Pruned ViT (20%)",
+        "pruned_40": "Pruned ViT (40%)",
+        "pruned_60": "Pruned ViT (60%)"
+    }
 
     for m_type in models_to_test:
         model = build_benchmark_model(m_type, image_size=args.image_size)
@@ -201,9 +265,11 @@ if __name__ == "__main__":
             use_fp16=args.fp16
         )
 
-        name = "CrossViT" if m_type == "cvit" else "Standard ViT"
+        name = name_map.get(m_type, m_type)
         print(
-            f"| {name:<12} | {res['precision']:<9} | {res['params_m']:<10} | {res['peak_mem_mb']:<13} | "
+            f"| {name:<16} | {res['precision']:<9} | {res['params_m']:<10} | {res['peak_mem_mb']:<13} | "
             f"{res['lat_p50_ms']:<8} | {res['lat_p95_ms']:<8} | {res['lat_p99_ms']:<8} | {res['throughput_fps']:<7} |"
         )
     print(divider)
+
+

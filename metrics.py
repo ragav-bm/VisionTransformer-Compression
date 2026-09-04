@@ -21,12 +21,16 @@ def compute_multilabel_metrics(targets, probabilities, threshold=0.5):
     if isinstance(probabilities, torch.Tensor):
         probabilities = probabilities.detach().cpu().numpy()
 
-    # 1. Mean Average Precision (mAP)
-    # average_precision_score with average='macro' computes AP per class and averages them
-    try:
-        mAP = average_precision_score(targets, probabilities, average="macro")
-    except ValueError:
-        mAP = 0.0
+    # 1. Mean Average Precision (mAP) averaged across all C classes
+    num_classes = targets.shape[1]
+    class_aps = []
+    for c in range(num_classes):
+        if np.sum(targets[:, c]) > 0:
+            ap_c = average_precision_score(targets[:, c], probabilities[:, c])
+            class_aps.append(ap_c)
+        else:
+            class_aps.append(0.0)
+    mAP = float(np.mean(class_aps)) if len(class_aps) > 0 else 0.0
 
     # 2. Binary predictions for F1/Precision/Recall at decision threshold
     preds = (probabilities >= threshold).astype(np.float32)

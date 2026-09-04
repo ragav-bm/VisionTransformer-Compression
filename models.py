@@ -53,13 +53,12 @@ class Attention(nn.Module):
         q = rearrange(q, 'b n (h d) -> b h n d', h = h)
         k = rearrange(k, 'b n (h d) -> b h n d', h = h)
         v = rearrange(v, 'b n (h d) -> b h n d', h = h)
-        Attention = torch.einsum('b h i d, b h j d -> b h i j', q, k)
-        Attention = Attention/self.scale
-        Attention= self.softmax(Attention)
-        Attention = self.dropout(Attention)
-        Attention = torch.einsum('b h i j, b h j d -> b h i d', Attention,v)
-        Attention =rearrange(Attention, 'b h n d -> b n (h d)')
-        return self.out1(Attention)
+        
+        # Hardware-accelerated FlashAttention / SDPA on Tensor Cores
+        dropout_p = self.dropout.p if self.training else 0.0
+        out = F.scaled_dot_product_attention(q, k, v, dropout_p=dropout_p)
+        out = rearrange(out, 'b h n d -> b n (h d)')
+        return self.out1(out)
     
 class Transformer(nn.Module):
     def __init__(self, dim, depth, heads, dim_head, mlp_dim, dropout = 0.):

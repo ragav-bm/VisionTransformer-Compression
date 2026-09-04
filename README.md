@@ -14,72 +14,60 @@ Driven by personal interest to take this beyond academic toy classification, thi
 
 ---
 
+## Phase 1 Hardware Profiling & Latency Breakdown (Batch Size = 1)
+
+Evaluated at full perception resolution ($224 \times 224$) on an NVIDIA RTX 5070 Ti under real-time batch-1 streaming conditions using hardware CUDA events over 200 iterations (after 50 warmup iterations):
+
+| Model Architecture | Precision | Parameters | Peak VRAM | $p50$ Latency | $p95$ Latency | $p99$ Latency | Throughput (FPS) |
+|---|---|---|---|---|---|---|---|
+| **Standard ViT** | **FP32** | 11.03M | 78.69 MB | 1.35 ms | 1.39 ms | 1.59 ms | **739.3 FPS** |
+| **Standard ViT** | **FP16** | 11.03M | 78.69 MB | **0.86 ms** | **0.92 ms** | **0.99 ms** | **1,157.2 FPS** 🚀 |
+| **CrossViT Teacher** | **FP32** | 28.48M | 143.12 MB | 3.29 ms | 3.84 ms | 4.48 ms | **303.9 FPS** |
+| **CrossViT Teacher** | **FP16** | 28.48M | 143.12 MB | 5.54 ms | 6.00 ms | 6.09 ms | **180.4 FPS** |
+
+---
+
+## Phase 2: Knowledge Distillation Results
+
+Evaluated on **2,000 real validation images** from BDD100K across all 15 driving scene attributes:
+
+| Model Configuration | Training Strategy | Parameters | mAP (%) | Macro Recall (%) | $p50$ Latency (FP16) | Throughput (FPS) |
+|---|---|---|---|---|---|---|
+| **CrossViT Teacher** | Multi-Scale Baseline | 28.48M | 33.51% | 56.94% | 5.54 ms | 180.4 FPS |
+| **Standard ViT** | Scratch Baseline Student | 11.03M | 40.52% | 62.92% | **0.86 ms** | **1,157.2 FPS** |
+| **Standard ViT (Cold KD)** | Distilled from Scratch | 11.03M | 40.94% | **65.24%** | **0.86 ms** | **1,157.2 FPS** |
+| **Standard ViT (Warm KD)** | **Fine-Tuned with Teacher KD** | **11.03M** | **42.28%** 🚀 | 64.65% | **0.86 ms** | **1,157.2 FPS** |
+
+* **Cold vs. Warm Distillation in a single line**: Cold-start distillation trains an uninitialized student from scratch with teacher soft guidance (40.94% mAP), whereas Warm-start distillation fine-tunes an already-converged student to refine decision boundaries on tail attributes (42.28% mAP, +1.76% gain).
+
+> 💡 **Hardware Insights & Optimizations**: For details on FlashAttention-2 integration and why the single-stream ViT achieves 1,157 FPS while dual-stream CrossViT is CPU-dispatch bound at batch 1, see [**`PROJECT_PLAN.md` (Code Optimizations & Hardware Insights)**](PROJECT_PLAN.md#code-optimizations--hardware-insights).
+>
+> 📊 **Detailed Per-Class Breakdown**: For the full 15-attribute per-class AP breakdown (e.g. `parking lot` +9.69%, `rainy` +4.96%, `residential` +3.07%), see [**`PROJECT_PLAN.md` (Per-Class AP Report)**](PROJECT_PLAN.md#phase-2-comprehensive-per-class-average-precision-ap--report).
+---
+
 ## Roadmap & Compression Pipeline
 
-1. **Phase 1: Multi-Label Baseline**: Dataset pipeline for 15 BDD100K scene attributes, baseline CrossViT teacher training pipeline, and an edge latency/memory benchmarking harness.
-2. **Phase 2: Knowledge Distillation & Pruning**: Transferring representations to a compact student model, followed by structured attention head and MLP channel pruning (20%, 40%, 60% sparsity) with recovery fine-tuning.
-3. **Phase 3: Quantization & Deployment**: ONNX graph export, INT8 Post-Training Quantization (PTQ), and INT8 Quantization-Aware Training (QAT).
-4. **Phase 4: Benchmarking & Pareto Analysis**: Comprehensive evaluation sweep measuring accuracy vs. batch-1 latency ($p50/p95$), peak memory, and parameter counts on target hardware.
+1. **Phase 1: Multi-Label Baseline** (Completed ✅): Dataset pipeline for 15 BDD100K scene attributes, CrossViT teacher baseline training pipeline, and edge profiling harness.
+2. **Phase 2: Knowledge Distillation & Structured Pruning** (Completed ✅): Multi-scale KD (+1.76% mAP) and structured head/channel pruning (20%, 40%, 60% sparsity) achieving up to **1,982 FPS** (0.50 ms) at **4.41M parameters**.
+3. **Phase 3: Quantization & Deployment** (Next 🎯): ONNX graph export, INT8 Post-Training Quantization (PTQ), and INT8 Quantization-Aware Training (QAT).
+4. **Phase 4: Benchmarking & Pareto Analysis**: Comprehensive evaluation sweep measuring mAP accuracy vs. batch-1 latency ($p50$) to identify optimal deployment candidates for edge devices.
 
 For detailed milestone breakdowns, see [**`PROJECT_PLAN.md`**](PROJECT_PLAN.md).
-
----
-
-## Phase 1: Core Modules & Mathematical Foundations
-
-### 1. Multi-Label Dataset & Class Balancing ([`dataset_bdd.py`](dataset_bdd.py))
-Handles 15 co-occurring driving attributes (7 Weather, 6 Scene Context, 2 Time-of-Day) at $224 \times 224$ resolution. Because rare classes (e.g. `foggy`, `snowy`, `tunnel`) appear in very few samples, we dynamically compute a positive weight vector $w_{\text{pos}, c}$:
-
-$$w_{\text{pos}, c} = \frac{N_{\text{total}} - N_{\text{pos}, c}}{N_{\text{pos}, c}}$$
-
-This is integrated into Weighted Binary Cross-Entropy with Logits:
-
-$$\mathcal{L}_{\text{BCE}} = -\frac{1}{C} \sum_{c=1}^{C} \left[ w_{\text{pos}, c} \cdot y_c \log \sigma(z_c) + (1 - y_c) \log(1 - \sigma(z_c)) \right]$$
-
-### 2. Multi-Label Evaluation Engine ([`metrics.py`](metrics.py))
-Computes threshold-independent Mean Average Precision (**mAP**) and Macro/Micro F1 scores across all 15 classes:
-
-$$\text{mAP} = \frac{1}{C} \sum_{c=1}^{C} \text{AP}_c, \quad \text{where } \text{AP}_c = \sum_{k} (R_k - R_{k-1}) P_k$$
-
-$$\text{Macro F1} = \frac{1}{C} \sum_{c=1}^{C} \frac{2 \cdot P_c \cdot R_c}{P_c + R_c}$$
-
-### 3. Multi-Label Teacher Training Pipeline ([`train_bdd.py`](train_bdd.py))
-Trains the high-resolution CrossViT Teacher (28.48M parameters) using:
-* **AdamW Decoupled Weight Decay**:
-  $$\theta_{t+1} = \theta_t - \eta_t \left( \frac{\hat{m}_t}{\sqrt{\hat{v}_t} + \epsilon} + \lambda \theta_t \right)$$
-* **Cosine Annealing Learning Rate Schedule**:
-  $$\eta_t = \eta_{\text{min}} + \frac{1}{2} (\eta_{\text{max}} - \eta_{\text{min}}) \left(1 + \cos\left(\frac{t}{T_{\text{max}}} \pi\right)\right)$$
-* **Automatic Mixed Precision (AMP)** for fast 16-bit tensor operations with dynamic gradient scaling.
-
-### 4. Edge Benchmarking Harness ([`benchmark_edge.py`](benchmark_edge.py))
-Uses microsecond-precise CUDA hardware events (`torch.cuda.Event`) after a 50-iteration GPU warmup to measure real-time latency percentiles ($p50, p95, p99$), peak memory footprint, and throughput:
-
-$$\text{Throughput (FPS)} = \frac{\text{Batch Size}}{p50 / 1000}$$
-
----
-
-## Phase 1: Baseline Edge Profiling Results (RTX 5070 Ti, Batch Size = 1)
-
-| Model Architecture | Precision | Parameters (M) | Peak VRAM (MB) | $p50$ Latency | $p95$ Latency | $p99$ Latency | Throughput (FPS) |
-|---|---|---|---|---|---|---|---|
-| **Standard ViT** | FP32 | 11.03M | 79.0 MB | **1.34 ms** | 1.35 ms | 1.46 ms | **744 FPS** |
-| **CrossViT Teacher** | FP32 | 28.48M | 144.2 MB | **3.76 ms** | 3.87 ms | 3.97 ms | **265 FPS** |
-| **CrossViT Teacher** | FP16 | 28.48M | **90.7 MB** | 9.81 ms | 10.22 ms | 10.46 ms | 102 FPS |
-
-> **Baseline Observation**: The dual-branch CrossViT Teacher provides expressive multi-scale feature interactions, but incurs **$2.6\times$ more parameters** and **$2.8\times$ higher latency** than a single-branch ViT. This motivates our Phase 2 compression pipeline (Knowledge Distillation and Structured Pruning).
 
 ---
 
 ## Project Structure
 
 ```
-├── README.md           # Project overview, mathematical formulation, and benchmarks
-├── PROJECT_PLAN.md     # Detailed phase-by-phase roadmap
+├── README.md           # Project overview, benchmark results, and engineering insights
+├── PROJECT_PLAN.md     # Full 4-phase roadmap and mathematical formulations
 ├── dataset_bdd.py      # BDD100K multi-label dataset loader with dynamic positive weighting
 ├── metrics.py          # Multi-label evaluation engine (mAP, Macro/Micro F1, threshold sweep)
-├── train_bdd.py        # Multi-label teacher training pipeline with AdamW and AMP
+├── train_bdd.py        # Multi-label teacher & baseline student training pipeline
+├── distill.py          # Knowledge distillation pipeline (supports cold and warm start)
+├── prune.py            # Structured head and channel pruning with recovery fine-tuning
 ├── benchmark_edge.py   # Edge latency, peak VRAM, and FPS benchmarking harness
-├── models.py           # From-scratch ViT and CrossViT model implementations
+├── models.py           # Hardware-optimized ViT and CrossViT model implementations
 ├── main.py             # Legacy CIFAR-10 classification script
 ├── assets/             # Benchmark plots and visual assets
 └── experiments/        # Saved model weights and experiment checkpoints (gitignored)
@@ -94,13 +82,41 @@ $$\text{Throughput (FPS)} = \frac{\text{Batch Size}}{p50 / 1000}$$
 uv add torch torchvision einops scikit-learn pandas matplotlib
 ```
 
-### 2. Run Edge Profiling
-Benchmark all models on your local GPU (batch size 1):
+### 2. Edge Latency Benchmarking
+Profile batch-1 inference across all architectures:
 ```bash
+# FP32 Benchmark
 uv run python benchmark_edge.py --model all --batch-size 1
+
+# Hardware FP16 Benchmark
+uv run python benchmark_edge.py --model all --batch-size 1 --fp16
 ```
 
-### 3. Train Multi-Label CrossViT Teacher
+### 3. Multi-Label Training
+Train the CrossViT Teacher or Standard ViT Student:
 ```bash
+# Train Teacher (CrossViT)
 uv run python train_bdd.py --model cvit --epochs 10 --batch-size 32 --lr 3e-4
+
+# Train Student Baseline (Standard ViT)
+uv run python train_bdd.py --model vit --epochs 10 --batch-size 32 --lr 3e-4
+```
+
+### 4. Warm-Start Knowledge Distillation
+Distill the CrossViT teacher into the pre-trained ViT student:
+```bash
+uv run python distill.py --teacher-ckpt experiments/bdd_cvit_best.pth --student-ckpt experiments/bdd_vit_best.pth --epochs 10 --batch-size 32 --lr 1e-4 --temperature 3.0 --alpha 0.5
+```
+
+### 5. Structured Head & Channel Pruning
+Prune attention heads and MLP channels across sparsity tiers:
+```bash
+# 20% Sparsity (9.02M params, 1,623 FPS)
+uv run python prune.py --sparsity 0.20 --epochs 5
+
+# 40% Sparsity (7.01M params, 1,807 FPS)
+uv run python prune.py --sparsity 0.40 --epochs 5
+
+# 60% Sparsity (4.41M params, 1,982 FPS)
+uv run python prune.py --sparsity 0.60 --epochs 5
 ```

@@ -62,26 +62,45 @@ class BDD100KMultiLabelDataset(Dataset):
         with open(annotation_file, 'r') as f:
             data = json.load(f)
 
-        for entry in data:
+        if isinstance(data, dict):
+            entries = data.get("samples", [data])
+        elif isinstance(data, list):
+            entries = data
+        else:
+            entries = []
+
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            
             img_name = entry.get("name", "")
+            if not img_name and "filepath" in entry:
+                img_name = os.path.basename(entry["filepath"])
+            
             img_path = os.path.join(self.image_dir, img_name) if self.image_dir else img_name
-            attrs = entry.get("attributes", {})
+            attrs = entry.get("attributes", entry)
 
             # Construct 15-dimensional multi-hot binary label
             label = np.zeros(NUM_ATTRIBUTES, dtype=np.float32)
 
             # 1. Weather
-            w = attrs.get("weather", "").lower()
+            w = attrs.get("weather", "")
+            if isinstance(w, dict): w = w.get("label", "")
+            w = str(w).lower()
             if w in WEATHER_CLASSES:
                 label[WEATHER_CLASSES.index(w)] = 1.0
 
             # 2. Scene
-            s = attrs.get("scene", "").lower()
+            s = attrs.get("scene", "")
+            if isinstance(s, dict): s = s.get("label", "")
+            s = str(s).lower()
             if s in SCENE_CLASSES:
                 label[len(WEATHER_CLASSES) + SCENE_CLASSES.index(s)] = 1.0
 
             # 3. Time of Day
-            t = attrs.get("timeofday", "").lower()
+            t = attrs.get("timeofday", "")
+            if isinstance(t, dict): t = t.get("label", "")
+            t = str(t).lower()
             if t in TIMEOFDAY_CLASSES:
                 label[len(WEATHER_CLASSES) + len(SCENE_CLASSES) + TIMEOFDAY_CLASSES.index(t)] = 1.0
 
