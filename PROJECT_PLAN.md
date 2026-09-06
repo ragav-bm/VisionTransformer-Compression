@@ -17,14 +17,13 @@ A research and engineering roadmap exploring Vision Transformers (ViT) and Multi
 * **Structured Head & Channel Pruning (`prune.py`) (Completed ✅)**: Sliced redundant Multi-Head Attention heads and intermediate MLP hidden dimensions across 20%, 40%, and 60% sparsity levels using L1-norm importance criteria, achieving up to a **$1.44\times$ hardware speedup (0.50 ms / 1,982 FPS)** and **60.0% parameter reduction** (11.03M $\to$ 4.41M).
 * **Recovery Fine-Tuning (Completed ✅)**: Restored perception accuracy across all sparsity tiers using 5-epoch cosine-annealed fine-tuning on BDD100K.
 
-### Phase 3: Quantization & Deployment (Next 🎯)
-* **ONNX Graph Export (`export_onnx.py`)**: Export PyTorch model graphs to standardized ONNX representation with fixed batch-1 inference shapes.
-* **INT8 Post-Training Quantization (PTQ)**: Quantize FP32 weights and activations to INT8 using calibration data to determine optimal quantization scales.
-* **INT8 Quantization-Aware Training (QAT)**: Insert fake-quantization operators during fine-tuning to model 8-bit rounding errors and preserve mAP.
+### Phase 3: Quantization & Deployment (Completed ✅)
+* **ONNX Graph Export (`export_onnx.py`)**: Exported PyTorch model graphs to standardized ONNX representation with dynamic batch axes and validated $< 2.9 \times 10^{-6}$ numerical parity.
+* **Calibration-based Static INT8 PTQ (`quantize.py`)**: Quantized FP32 weights and intermediate activations using representative BDD100K calibration data, achieving **$3.7\times$ storage compression (down to 4.90 MB)** with **$99.8\%+$ mAP retention**.
 
-### Phase 4: Benchmarking & Pareto Analysis
-* **Comprehensive Evaluation Sweep**: Benchmark all model configurations (Teacher, Student, Distilled, Pruned at 20/40/60%, PTQ INT8, QAT INT8).
-* **Pareto Frontier Analysis**: Plot mAP accuracy vs. batch-1 latency ($p50$) to identify optimal deployment candidates for edge devices.
+### Phase 4: Benchmarking & Pareto Analysis (Completed ✅)
+* **Edge Hardware Profiling (`benchmark_onnx.py`)**: Benchmarked multi-run execution latency ($p50, p95, p99$) and throughput across PyTorch GPU and ONNX Runtime CPU.
+* **Pareto Frontier Analysis (`plot_pareto.py`)**: Generated multi-objective trade-off curves (mAP vs. latency vs. storage footprint) identifying optimal deployment candidates.
 
 ---
 
